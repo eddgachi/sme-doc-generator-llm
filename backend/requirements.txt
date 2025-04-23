@@ -1,0 +1,15 @@
+fastapi
+alembic
+uvicorn
+sqlalchemy
+aiomysql
+asyncpg
+celery
+pydantic
+psycopg2-binary  
+python-dotenv
+cryptography
+httpx
+aiohttp
+pyodbc
+requests
