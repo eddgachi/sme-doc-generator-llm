@@ -1,51 +1,42 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import AuditTrailView from '../views/AuditTrailView.vue'
-import ConfigurationView from '../views/ConfigurationView.vue'
-import DashboardView from '../views/DashboardView.vue'
-import DetailedLogsView from '../views/DetailedLogsView.vue'
-import HistoryView from '../views/HistoryView.vue'
+
+import ApiDocsView from '../views/ApiDocsView.vue'
+import DocHistoryView from '../views/DocHistoryView.vue'
+import GenerateDocView from '../views/GenerateDocView.vue'
+import ModelSettingsView from '../views/ModelSettingsView.vue'
+import TemplateManagementView from '../views/TemplateManagementView.vue'
 
 const routes = [
   {
     path: '/',
-    name: 'Dashboard',
-    component: DashboardView,
-    meta: { title: 'Dashboard' }, // Add titles for browser tab
+    name: 'GenerateDoc',
+    component: GenerateDocView,
+    meta: { title: 'Generate Document' },
   },
   {
-    path: '/history',
-    name: 'History',
-    component: HistoryView,
-    meta: { title: 'Sync History' },
+    path: '/templates',
+    name: 'Templates',
+    component: TemplateManagementView,
+    meta: { title: 'Manage Templates' },
   },
   {
-    path: '/logs',
-    name: 'DetailedLogs',
-    component: DetailedLogsView,
-    meta: { title: 'Detailed Logs' },
-  },
-  // Optional: Route for logs specific to a job
-  {
-    path: '/logs/:jobId',
-    name: 'JobLogs',
-    component: DetailedLogsView, // Reuse the same component
-    props: true, // Pass route params as props
-    meta: { title: 'Job Logs' },
+    path: '/settings/llm',
+    name: 'ModelSettings',
+    component: ModelSettingsView,
+    meta: { title: 'LLM Settings' },
   },
   {
-    path: '/audit',
-    name: 'AuditTrail',
-    component: AuditTrailView,
-    meta: { title: 'Audit Trail' },
+    path: '/history/docs',
+    name: 'DocHistory',
+    component: DocHistoryView,
+    meta: { title: 'Document History' },
   },
   {
-    path: '/config',
-    name: 'Configuration',
-    component: ConfigurationView,
-    meta: { title: 'Configuration' },
+    path: '/api-docs',
+    name: 'ApiDocs',
+    component: ApiDocsView,
+    meta: { title: 'API Documentation' },
   },
-  // Add a fallback route for 404?
-  // { path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFoundView }
 ]
 
 const router = createRouter({

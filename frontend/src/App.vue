@@ -22,27 +22,27 @@
         <ul class="list-unstyled">
           <li>
             <router-link to="/" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
-              ><i class="fas fa-fw fa-tachometer-alt me-2"></i>Dashboard</router-link
+              ><i class="fas fa-fw fa-file-alt me-2"></i>Generate Document</router-link
             >
           </li>
           <li>
-            <router-link to="/history" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
-              ><i class="fas fa-fw fa-history me-2"></i>Sync History</router-link
+            <router-link to="/templates" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
+              ><i class="fas fa-fw fa-code me-2"></i>Template Management</router-link
             >
           </li>
           <li>
-            <router-link to="/logs" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
-              ><i class="fas fa-fw fa-clipboard-list me-2"></i>Detailed Logs</router-link
+            <router-link to="/history/docs" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
+              ><i class="fas fa-fw fa-history me-2"></i>Document History</router-link
             >
           </li>
           <li>
-            <router-link to="/audit" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
-              ><i class="fas fa-fw fa-user-secret me-2"></i>Audit Trail</router-link
+            <router-link to="/settings/llm" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
+              ><i class="fas fa-fw fa-cogs me-2"></i>Model Settings</router-link
             >
           </li>
           <li>
-            <router-link to="/config" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
-              ><i class="fas fa-fw fa-cog me-2"></i>Configuration</router-link
+            <router-link to="/api-docs" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
+              ><i class="fas fa-fw fa-book me-2"></i>API Docs</router-link
             >
           </li>
         </ul>
@@ -89,9 +89,7 @@
           theme === 'dark' ? 'bg-black border-secondary' : 'bg-light border-light-subtle',
         ]"
       >
-        © {{ new Date().getFullYear() }} Qona Sacco Data Sync | Powered by
-        <a href="https://jasco.co.ke/" target="_blank">Jasco Communications</a> | Version 1.2.0 |
-        <a href="#">Privacy Policy</a>
+        © {{ new Date().getFullYear() }} made with ❤️
       </footer>
     </div>
   </div>
