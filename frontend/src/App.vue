@@ -59,7 +59,7 @@
                 <i :class="['fas fa-bars', theme === 'dark' ? 'text-light' : 'text-dark']"></i>
               </button>
               <h1 class="h6 mb-0 fw-semibold d-none d-md-inline" :class="theme === 'dark' ? 'text-light' : 'text-dark'">
-                <i class="fas fa-sync-alt me-2 text-primary opacity-75"></i> Qona Sacco Data Sync
+                <i class="fas fa-sync-alt me-2 text-primary opacity-75"></i> SME Doc Generator
               </h1>
               <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle fw-medium">
                 <i class="fas fa-check-circle me-1"></i> Connected

@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
-router = APIRouter()
+
+# General Router for shared endpoints
+general_router = APIRouter(prefix="/api", tags=["General"])
 
 
-@router.get("/")
+@general_router.get("/")
 def read_root():
     return {"message": "Hello World"}

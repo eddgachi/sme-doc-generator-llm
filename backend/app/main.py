@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer
 
-from .routes import read_root
+from .routes import general_router
 from .services import check_configs_exist, seed_default_configs
 from .session import SessionLocal
 
@@ -36,7 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(read_root)
+app.include_router(general_router)
 
 
 desc = ""
