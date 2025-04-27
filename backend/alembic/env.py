@@ -4,7 +4,7 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
-from app.models import ApplicationConfig
+from app.models import ApplicationConfig, PromptTemplate, DocumentHistory
 from app.session import Base
 
 # this is the Alembic Config object, which provides
