@@ -41,7 +41,7 @@ class ApplicationConfigUpdate(BaseSchema):
     )
 
 
-class ApplicationConfig(ApplicationConfigBase):
+class ApplicationConfigSchema(ApplicationConfigBase):
     id: int
 
 
@@ -77,7 +77,7 @@ class PromptTemplateUpdate(BaseSchema):
     )
 
 
-class PromptTemplate(PromptTemplateBase):
+class PromptTemplateSchema(PromptTemplateBase):
     id: uuid.UUID
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -113,6 +113,6 @@ class DocumentHistoryUpdate(BaseSchema):
     )
 
 
-class DocumentHistory(DocumentHistoryBase):
+class DocumentHistorySchema(DocumentHistoryBase):
     id: uuid.UUID
     generated_at: datetime

@@ -1,11 +1,14 @@
+# utils.py
+
 from sqlalchemy.orm import Session
 
 from .models import ApplicationConfig
 
+# Define the default configuration settings
 DEFAULT_CONFIGS = [
     {
         "config_key": "openai_api_key",
-        "config_value": "",
+        "config_value": "",  # Keeping this empty by default for security
         "description": "OpenAI API Key",
     },
     {
@@ -27,6 +30,16 @@ DEFAULT_CONFIGS = [
         "config_key": "llm_max_tokens",
         "config_value": "1024",
         "description": "Limits response length",
+    },
+    {
+        "config_key": "llm_system_message",
+        "config_value": "You are a helpful assistant.",
+        "description": "Default system message for LLM calls.",
+    },
+    {
+        "config_key": "llm_model_test",
+        "config_value": "gpt-3.5-turbo",
+        "description": "Specific LLM model to use for the connection test endpoint.",
     },
     {
         "config_key": "default_doc_format",
@@ -64,40 +77,68 @@ DEFAULT_CONFIGS = [
 def check_configs_exist(db: Session) -> bool:
     """
     Checks if any config records exist in the database.
+    Useful to determine if initial seeding is needed.
     """
-    return db.query(ApplicationConfig.id).first() is not None
+    # Check if the application_config table has any rows
+    return db.query(ApplicationConfig.id).limit(1).first() is not None
 
 
 def seed_default_configs(db: Session):
     """
     Seeds the database with default configuration settings.
+    If a config key already exists, it updates the value and description
+    to match the defaults. If it doesn't exist, it creates it.
     """
-    # Check for existing configs to avoid duplicates
-    existing_configs = {
-        cfg.config_key: cfg for cfg in db.query(ApplicationConfig).all()
-    }
-
+    print("Starting default config seeding...")
     for cfg_data in DEFAULT_CONFIGS:
-        if cfg_data["config_key"] not in existing_configs:
-            config = ApplicationConfig(
-                config_key=cfg_data["config_key"],
-                config_value=cfg_data["config_value"],
-                description=cfg_data["description"],
-            )
-            db.add(config)
+        config_key = cfg_data["config_key"]
+        default_value = cfg_data["config_value"]
+        default_description = cfg_data["description"]
+
+        # Try to find the existing config
+        existing_config = (
+            db.query(ApplicationConfig)
+            .filter(ApplicationConfig.config_key == config_key)
+            .first()
+        )
+
+        if existing_config:
+            # Config exists, check if update is needed
+            needs_update = False
+            if existing_config.config_value != default_value:
+                existing_config.config_value = default_value
+                needs_update = True
+                print(f"Updating config '{config_key}': value changed.")
+
+            # Only update description if the default description is not None and different
+            if (
+                default_description is not None
+                and existing_config.description != default_description
+            ):
+                existing_config.description = default_description
+                needs_update = True
+                print(f"Updating config '{config_key}': description changed.")
+
+            if needs_update:
+                db.add(existing_config)  # Stage the update
+                print(f"Config '{config_key}' updated.")
+            else:
+                print(f"Config '{config_key}' already exists and is up-to-date.")
+
         else:
-            print(f"Config '{cfg_data['config_key']}' already exists, skipping.")
+            # Config does not exist, create it
+            new_config = ApplicationConfig(
+                config_key=config_key,
+                config_value=default_value,
+                description=default_description,
+            )
+            db.add(new_config)  # Stage the creation
+            print(f"Creating new config '{config_key}'.")
 
-    db.commit()
-    print("Default configs seeded successfully.")
-
-
-def get_config_by_key(db: Session, config_key: str) -> ApplicationConfig:
-    """
-    Retrieves a config by its key.
-    """
-    return (
-        db.query(ApplicationConfig)
-        .filter(ApplicationConfig.config_key == config_key)
-        .first()
-    )
+    try:
+        db.commit()
+        print("Default configs seeding completed successfully.")
+    except Exception as e:
+        db.rollback()
+        print(f"Error during default config seeding: {e}")
+        raise

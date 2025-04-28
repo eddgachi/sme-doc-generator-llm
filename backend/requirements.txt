@@ -13,3 +13,4 @@ httpx
 aiohttp
 pyodbc
 requests
+openai

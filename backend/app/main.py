@@ -39,7 +39,7 @@ app.add_middleware(
 app.include_router(general_router)
 
 
-desc = ""
+desc = "Backend APIs For a cloud-based application that leverages modern full-stack technologies and AI/LLM integrations to generate business documents (Quotes, Invoices, LPOs, Contracts) on demand. Users can select a document type, fill out dynamic forms, and receive a fully formatted document ready for download."
 
 
 def custom_openapi():
