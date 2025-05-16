@@ -21,13 +21,13 @@
       <div class="p-3 sidebar-nav">
         <ul class="list-unstyled">
           <li>
-            <router-link to="/" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
-              ><i class="fas fa-fw fa-file-alt me-2"></i>Generate Document</router-link
+            <router-link to="/templates" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
+              ><i class="fas fa-fw fa-code me-2"></i>Template Management</router-link
             >
           </li>
           <li>
-            <router-link to="/templates" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
-              ><i class="fas fa-fw fa-code me-2"></i>Template Management</router-link
+            <router-link to="/" class="nav-link" :class="theme === 'dark' ? 'text-light' : 'text-dark'"
+              ><i class="fas fa-fw fa-file-alt me-2"></i>Generate Document</router-link
             >
           </li>
           <li>
