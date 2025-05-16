@@ -13,4 +13,5 @@ httpx
 aiohttp
 pyodbc
 requests
-openai
+google-generativeai
+google-api-core

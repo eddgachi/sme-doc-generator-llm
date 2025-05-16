@@ -32,7 +32,7 @@ services:
       POSTGRES_PASSWORD: fastapi_password
       POSTGRES_DB: sme_doc_generator
     ports:
-      - '5433:5432'
+      - '5434:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

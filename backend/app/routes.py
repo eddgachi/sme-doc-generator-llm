@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List
 
-import openai
+import google.generativeai as genai  # Import the Google Generative AI library
 from app.models import ApplicationConfig, DocumentHistory, PromptTemplate
 from app.schemas import (
     ApplicationConfigCreate,
@@ -16,9 +16,19 @@ from app.schemas import (
     PromptTemplateSchema,
     PromptTemplateUpdate,
 )
+
+# Import config utility functions from services
+from app.services import (
+    DEFAULT_CONFIGS,
+    get_config_by_key,
+    get_config_value,
+    get_google_api_key,
+)
 from app.session import get_db
-from app.utils import get_config_value
 from fastapi import APIRouter, Depends, HTTPException, status
+from google.api_core import (
+    exceptions as google_exceptions,
+)  # Import Google API exceptions
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,85 +42,6 @@ def read_root():
     return {"message": "SME Document Generator API"}
 
 
-# --- Helper function to get OpenAI API key ---
-def get_openai_api_key(db: Session) -> str:
-    """Retrieves the OpenAI API key from the database configuration."""
-    api_key = get_config_value(
-        db, "openai_api_key"
-    )  # Get key from DB using a utility function
-    if not api_key:
-        # Consider adding environment variable fallback here as a robust option
-        # import os
-        # api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="OpenAI API key not configured in the database.",
-            )
-    return api_key
-
-
-# --- Endpoint to test OpenAI Connection ---
-@general_router.get("/settings/llm/test-connection", summary="Test LLM Connection")
-def test_llm_connection(db: Session = Depends(get_db)):
-    """
-    Tests the connection to the configured LLM provider (e.g., OpenAI)
-    using the API key stored in the application config.
-    """
-    try:
-        api_key = get_openai_api_key(db)
-        # You might get the base URL and model from config too
-        llm_api_base_url = get_config_value(
-            db, "llm_api_base_url", default="https://api.openai.com/v1"
-        )
-        llm_model_test = get_config_value(
-            db, "llm_model_test", default="gpt-3.5-turbo"
-        )  # Use a specific test model config if available
-
-        # Initialize the OpenAI client with the API key
-        client = openai.OpenAI(
-            api_key=api_key, base_url=llm_api_base_url  # Use base_url parameter
-        )
-
-        # Make a small, cheap API call to verify the connection and key
-        response = client.chat.completions.create(
-            model=llm_model_test,  # Use the test model
-            messages=[{"role": "user", "content": "Hello, world!"}],
-            max_tokens=5,
-            timeout=10.0,  # Set a timeout for the test call
-        )
-        print(response)  # Log the response for debugging
-
-        # If the call succeeds without raising an exception, the connection is likely valid
-        return {"message": "LLM connection successful!", "status": "ok"}
-
-    except openai.AuthenticationError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="LLM Authentication failed. Check your API key.",
-        )
-    except openai.APIConnectionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LLM API connection error: Could not connect to the API endpoint. Details: {e}",
-        )
-    except openai.RateLimitError:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="LLM API rate limit exceeded.",
-        )
-    except openai.APIStatusError as e:
-        raise HTTPException(
-            status_code=e.status_code,
-            detail=f"LLM API error: {e.response.text}",
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred while testing LLM connection: {e}",
-        )
-
-
 # --- ApplicationConfig Endpoints (General & LLM Settings) ---
 @general_router.get(
     "/settings",
@@ -120,6 +51,10 @@ def test_llm_connection(db: Session = Depends(get_db)):
 def get_all_settings(db: Session = Depends(get_db)):
     """Retrieve all application configuration settings."""
     settings = db.query(ApplicationConfig).all()
+    # Mask the API key for security
+    for setting in settings:
+        if setting.config_key == "google_api_key" and setting.config_value:
+            setting.config_value = "********"
     return settings
 
 
@@ -139,6 +74,9 @@ def get_specific_setting(config_key: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Setting not found"
         )
+    # Mask the API key for security
+    if db_setting.config_key == "google_api_key" and db_setting.config_value:
+        db_setting.config_value = "********"
     return db_setting
 
 
@@ -201,11 +139,22 @@ def update_setting(
     # Update fields from the Pydantic model
     update_data = setting_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
+        # Do not update masked API key if received
+        if (
+            key == "config_value"
+            and config_key == "google_api_key"
+            and value == "********"
+        ):
+            continue
         setattr(db_setting, key, value)
 
     db.add(db_setting)
     db.commit()
     db.refresh(db_setting)
+
+    # Mask the API key in the response
+    if db_setting.config_key == "google_api_key" and db_setting.config_value:
+        db_setting.config_value = "********"
 
     return db_setting
 
@@ -231,6 +180,177 @@ def delete_setting(config_key: str, db: Session = Depends(get_db)):
     db.delete(db_setting)
     db.commit()
     return  # Returns 204 No Content on successful deletion
+
+
+# --- LLM Settings Endpoints (Specific) ---
+@general_router.get("/settings/llm", summary="Fetch LLM Settings")
+def get_llm_settings(db: Session = Depends(get_db)):
+    """
+    Fetches the current LLM configuration settings.
+    """
+    settings_keys = [
+        "google_api_key",
+        "llm_model",
+        "llm_api_base_url",
+        "llm_temperature",
+        "llm_max_tokens",
+        "llm_system_message",
+        "llm_model_test",
+        "default_doc_format",
+        "enable_history",
+        "history_retention_days",
+        "response_timeout_seconds",
+        "cors_allowed_origins",
+        "retry_on_failure_count",
+    ]
+    settings = {}
+    for key in settings_keys:
+        value = get_config_value(db, key)
+        # Mask the API key value for security
+        if key == "google_api_key" and value:
+            settings[key] = "********"
+        else:
+            settings[key] = value
+
+    # Add description for each setting from DEFAULT_CONFIGS for frontend display
+    config_descriptions = {
+        cfg["config_key"]: cfg["description"] for cfg in DEFAULT_CONFIGS
+    }
+    settings_with_descriptions = []
+    for key, value in settings.items():
+        settings_with_descriptions.append(
+            {
+                "config_key": key,
+                "config_value": value,
+                "description": config_descriptions.get(key, "No description available"),
+            }
+        )
+
+    return settings_with_descriptions
+
+
+@general_router.put("/settings/llm", summary="Update LLM Settings")
+def update_llm_settings(
+    settings_update: ApplicationConfigUpdate, db: Session = Depends(get_db)
+):
+    """
+    Updates the LLM configuration settings.
+    """
+    updated_count = 0
+    # ApplicationConfigUpdate schema should contain the keys you want to allow updating
+    update_data = settings_update.model_dump(exclude_unset=True)
+
+    for key, value in update_data.items():
+        config_item = get_config_by_key(db, key)
+        if config_item:
+            # Handle the masked API key input: if it's the masked string, don't update
+            if key == "google_api_key" and value == "********":
+                continue  # Skip updating the masked key
+
+            # Convert boolean/integer/float values from schema to string for storage
+            if (
+                isinstance(value, bool)
+                or isinstance(value, int)
+                or isinstance(value, float)
+            ):
+                config_item.config_value = str(value)
+            elif isinstance(value, list):  # Handle list for cors_allowed_origins
+                config_item.config_value = ",".join(value)
+            else:
+                config_item.config_value = str(
+                    value
+                )  # Ensure value is stored as string
+
+            db.add(config_item)
+            updated_count += 1
+        # Optional: Log a warning if a key in update_data doesn't exist in the database configs
+
+    db.commit()
+    # Note: Refreshing a single item might not reflect all changes if multiple were updated.
+    # For simplicity here, we rely on the next fetch to get updated values.
+
+    return {"message": f"Updated {updated_count} LLM settings."}
+
+
+@general_router.get("/settings/llm/test-connection", summary="Test LLM Connection")
+def test_llm_connection(db: Session = Depends(get_db)):
+    """
+    Tests the connection to the configured LLM provider (Google Gemini)
+    using the API key stored in the application config.
+    """
+    # 1. Load credentials & config
+    api_key = get_google_api_key(db)  # Use the helper function
+    test_model = get_config_value(
+        db, "llm_model_test", default="gemini-1.5-flash-latest"
+    )  # Use a Gemini test model
+    response_timeout_seconds = float(
+        get_config_value(db, "response_timeout_seconds", default="60")
+    )
+
+    # 2. Configure the Google Generative AI client
+    genai.configure(api_key=api_key)
+
+    try:
+        # 3. Get the model and send a minimal chat completion
+        model = genai.GenerativeModel(test_model)
+
+        # Use generate_content for a simple prompt
+        response = model.generate_content(
+            "Hello, world!",
+            request_options={
+                "timeout": response_timeout_seconds
+            },  # Use response_timeout_seconds
+        )
+
+        # Check if the response has content
+        # Gemini responses can be structured differently, check for parts
+        sample_reply = "No content received in response."
+        if response and response.candidates:
+            # Find the first text part in the content
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "text"):
+                    sample_reply = part.text
+                    break  # Found text, take the first part
+
+        return {
+            "status": "ok",
+            "message": "LLM connection successful!",
+            "model": test_model,
+            "sample_reply": sample_reply,
+        }
+
+    except google_exceptions.PermissionDenied as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Google AI authentication failed. Check your API key or project permissions. Details: {e}",
+        )
+    except google_exceptions.DeadlineExceeded as e:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Google AI API request timed out. Details: {e}",
+        )
+    except google_exceptions.ResourceExhausted as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Google AI API rate limit or quota exceeded. Details: {e}",
+        )
+    except google_exceptions.GoogleAPIError as e:
+        # Catches other general Google API errors
+        # Attempt to get a relevant status code, default to 500
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        if hasattr(e, "code"):
+            # Google API errors might have a 'code' attribute corresponding to HTTP status
+            status_code = e.code
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Google AI API error: {e}",
+        )
+    except Exception as e:
+        # Catch any other unexpected errors
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error while testing LLM connection: {e}",
+        )
 
 
 # --- PromptTemplate Endpoints ---
@@ -368,16 +488,27 @@ def test_template(
             status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
         )
 
-    api_key = get_openai_api_key(db)
-    client = openai.OpenAI(api_key=api_key)
+    # 1. Load credentials & config
+    api_key = get_google_api_key(db)
+    llm_model = get_config_value(
+        db, "llm_model_test", default="gemini-1.5-flash-latest"
+    )
+    llm_temperature = float(get_config_value(db, "llm_temperature", default="0.7"))
+    llm_max_tokens = int(get_config_value(db, "llm_max_tokens", default="1024"))
+    # llm_system_message = get_config_value(
+    #     db, "llm_system_message", default="You are a helpful assistant."
+    # )
+    response_timeout_seconds = float(
+        get_config_value(db, "response_timeout_seconds", default="60")
+    )
 
-    # TODO: Implement prompt construction logic
-    # This is a simplified example. You'll need to interpolate input_data
-    # into the template_content to form the actual prompt.
-    # Consider using a templating engine like Jinja2 or Python's .format()
+    # 2. Configure the Google Generative AI client
+    genai.configure(api_key=api_key)
+
+    # 3. Construct the prompt
     prompt = db_template.template_content  # Start with the template content
     try:
-        # Example simple interpolation (requires input_data keys match placeholders)
+        # Interpolate input_data into the template content
         prompt = prompt.format(**input_data)
     except KeyError as e:
         raise HTTPException(
@@ -390,54 +521,56 @@ def test_template(
             detail=f"Error formatting template with input data: {e}",
         )
 
-    # Get LLM settings from config
-    llm_model = get_config_value(db, "llm_model", default="gpt-3.5-turbo")
-    llm_temperature = get_config_value(db, "llm_temperature", default=0.7)
-    llm_max_tokens = get_config_value(db, "llm_max_tokens", default=1024)
-    llm_system_message = get_config_value(
-        db, "llm_system_message", default="You are a helpful assistant."
-    )  # Add a config for system message
+    # Add instruction for Kenyan context
+    kenyan_context_instruction = " Ensure the document is formatted and relevant for the Kenyan market, including using KES for currency where applicable."
+    final_prompt = prompt + kenyan_context_instruction
 
     try:
-        response = client.chat.completions.create(
-            model=llm_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": llm_system_message,
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=int(llm_max_tokens),  # Ensure type is int
-            temperature=float(llm_temperature),  # Ensure type is float
+        # 4. Get the model and send a chat completion
+        model = genai.GenerativeModel(llm_model)
+
+        response = model.generate_content(
+            final_prompt,
+            generation_config=genai.GenerationConfig(
+                max_output_tokens=llm_max_tokens, temperature=llm_temperature
+            ),
+            request_options={"timeout": response_timeout_seconds},
         )
-        generated_text = response.choices[0].message.content
+
+        # Extract generated text
+        generated_text = "No content received from LLM."
+        if response and response.candidates:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "text"):
+                    generated_text = part.text
+                    break
 
         return {"template_id": template_id, "test_output": generated_text}
 
-    except openai.AuthenticationError:
+    except google_exceptions.PermissionDenied as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="LLM Authentication failed during template test. Check your API key.",
+            detail=f"LLM Authentication failed during template test. Check your API key or project permissions. Details: {e}",
         )
-    except openai.APIConnectionError as e:
+    except google_exceptions.DeadlineExceeded as e:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LLM API connection error during template test: {e}",
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"LLM API request timed out during template test. Details: {e}",
         )
-    except openai.RateLimitError:
+    except google_exceptions.ResourceExhausted as e:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="LLM API rate limit exceeded during template test.",
+            detail=f"LLM API rate limit or quota exceeded during template test. Details: {e}",
         )
-    except openai.APIStatusError as e:
-        # Catch other API errors (e.g., invalid model)
+    except google_exceptions.GoogleAPIError as e:
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        if hasattr(e, "code"):
+            status_code = e.code
         raise HTTPException(
-            status_code=e.status_code,
-            detail=f"LLM API error during template test: {e.response.text}",
+            status_code=status_code,
+            detail=f"LLM API error during template test: {e}",
         )
     except Exception as e:
-        # Catch any other unexpected errors during the test
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred while testing template: {e}",
@@ -466,12 +599,25 @@ def generate_document(
             detail="Template not found or is inactive",
         )
 
-    api_key = get_openai_api_key(db)
-    client = openai.OpenAI(api_key=api_key)
+    # 1. Load credentials & config
+    api_key = get_google_api_key(db)
+    llm_model = get_config_value(db, "llm_model", default="gemini-1.5-flash-latest")
+    llm_temperature = float(get_config_value(db, "llm_temperature", default="0.7"))
+    llm_max_tokens = int(get_config_value(db, "llm_max_tokens", default="1024"))
+    # llm_system_message = get_config_value(
+    #     db, "llm_system_message", default="You are a helpful assistant."
+    # )
+    response_timeout_seconds = float(
+        get_config_value(db, "response_timeout_seconds", default="60")
+    )
+    enable_history = (
+        get_config_value(db, "enable_history", default="true").lower() == "true"
+    )  # Read as bool
 
-    # TODO: Implement prompt construction logic
-    # Interpolate generation_request.input_data into db_template.template_content
-    # Ensure input_data is correctly formatted (e.g., deserialized from JSON string)
+    # 2. Configure the Google Generative AI client
+    genai.configure(api_key=api_key)
+
+    # 3. Construct the prompt
     input_data_dict = {}
     if generation_request.input_data:
         try:
@@ -486,7 +632,7 @@ def generate_document(
 
     prompt = db_template.template_content  # Start with the template content
     try:
-        # Example simple interpolation (requires input_data keys match placeholders)
+        # Interpolate input_data into the template content
         prompt = prompt.format(**input_data_dict)
     except KeyError as e:
         raise HTTPException(
@@ -499,85 +645,91 @@ def generate_document(
             detail=f"Error formatting template with input data: {e}",
         )
 
-    # Get LLM settings from config
-    llm_model = get_config_value(db, "llm_model", default="gpt-3.5-turbo")
-    llm_temperature = get_config_value(db, "llm_temperature", default=0.7)
-    llm_max_tokens = get_config_value(db, "llm_max_tokens", default=1024)
-    llm_system_message = get_config_value(
-        db, "llm_system_message", default="You are a helpful assistant."
-    )  # Add a config for system message
+    # Add instruction for Kenyan context
+    kenyan_context_instruction = " Ensure the document is formatted and relevant for the Kenyan market, including using KES for currency where applicable. Provide the output in plain text or Markdown format suitable for a document."
+    final_prompt = prompt + kenyan_context_instruction
 
+    generated_text = "Error: Could not generate document."
     try:
-        response = client.chat.completions.create(
-            model=llm_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": llm_system_message,
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=int(llm_max_tokens),
-            temperature=float(llm_temperature),
+        # 4. Get the model and send a chat completion
+        model = genai.GenerativeModel(llm_model)
+
+        response = model.generate_content(
+            final_prompt,
+            generation_config=genai.GenerationConfig(
+                max_output_tokens=llm_max_tokens, temperature=llm_temperature
+            ),
+            request_options={"timeout": response_timeout_seconds},
         )
-        generated_text = response.choices[0].message.content
 
-        # Save history record
-        db_history = DocumentHistory(
-            template_id=generation_request.template_id,
-            input_data=generation_request.input_data,  # Save original input data string
-            generated_content=generated_text,  # Save generated text
-            document_format=generation_request.document_format,  # Save requested format
-            generated_at=datetime.utcnow(),
-            # user_id=... # Link to user if authentication is implemented
-        )
-        db.add(db_history)
-        db.commit()
-        db.refresh(db_history)
+        # Extract generated text
+        if response and response.candidates:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "text"):
+                    generated_text = part.text
+                    break
 
-        # TODO: Add logic here to convert generated_text to PDF/DOCX
-        # and return the file or a link to it.
-        # For simplicity, returning the generated text and history ID for now.
-
-        return {
-            "history_id": db_history.id,
-            "generated_content_preview": generated_text[:500]
-            + "...",  # Return a preview
-            "document_format": db_history.document_format,  # Return the format
-        }
-
-    except openai.AuthenticationError:
-        db.rollback()
+    except google_exceptions.PermissionDenied as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="LLM Authentication failed during generation. Check your API key.",
+            detail=f"LLM Authentication failed during generation. Check your API key or project permissions. Details: {e}",
         )
-    except openai.APIConnectionError as e:
-        db.rollback()
+    except google_exceptions.DeadlineExceeded as e:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LLM API connection error during generation: {e}",
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"LLM API request timed out during generation. Details: {e}",
         )
-    except openai.RateLimitError:
-        db.rollback()
+    except google_exceptions.ResourceExhausted as e:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="LLM API rate limit exceeded during generation.",
+            detail=f"LLM API rate limit or quota exceeded during generation. Details: {e}",
         )
-    except openai.APIStatusError as e:
-        db.rollback()
-        # Catch other API errors (e.g., invalid model)
+    except google_exceptions.GoogleAPIError as e:
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        if hasattr(e, "code"):
+            status_code = e.code
         raise HTTPException(
-            status_code=e.status_code,
-            detail=f"LLM API error during generation: {e.response.text}",
+            status_code=status_code,
+            detail=f"LLM API error during generation: {e}",
         )
     except Exception as e:
         # Catch any other unexpected errors during the test
-        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred during document generation: {e}",
         )
+
+    # 5. Save history record if enabled
+    history_id = None
+    if enable_history:
+        try:
+            db_history = DocumentHistory(
+                template_id=generation_request.template_id,
+                input_data=generation_request.input_data,  # Save original input data string
+                generated_content=generated_text,  # Save generated text
+                document_format=generation_request.document_format,  # Save requested format
+                generated_at=datetime.utcnow(),
+                # user_id=... # Link to user if authentication is implemented
+            )
+            db.add(db_history)
+            db.commit()
+            db.refresh(db_history)
+            history_id = db_history.id
+        except Exception as e:
+            db.rollback()
+            # Log the error but don't necessarily fail the generation request
+            print(f"Error saving document history: {e}")
+            # Optionally, raise a less severe error or return a warning in the response
+
+    # TODO: Add logic here to convert generated_text to PDF/DOCX
+    # and return the file or a link to it.
+    # For simplicity, returning the generated text and history ID for now.
+
+    return {
+        "history_id": history_id,  # Will be None if history is disabled or save failed
+        "generated_content": generated_text,  # Return the full generated text
+        "document_format": generation_request.document_format,  # Return the requested format
+    }
 
 
 # --- Document History Endpoints ---
@@ -590,6 +742,16 @@ def get_document_history(
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     """Retrieve the history of generated documents with pagination."""
+    # Check if history is enabled
+    enable_history = (
+        get_config_value(db, "enable_history", default="true").lower() == "true"
+    )
+    if not enable_history:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Document history is disabled in application settings.",
+        )
+
     history = db.query(DocumentHistory).offset(skip).limit(limit).all()
     return history
 
@@ -601,6 +763,16 @@ def get_document_history(
 )
 def get_specific_document_history(history_id: uuid.UUID, db: Session = Depends(get_db)):
     """Retrieve a specific document history record by ID."""
+    # Check if history is enabled
+    enable_history = (
+        get_config_value(db, "enable_history", default="true").lower() == "true"
+    )
+    if not enable_history:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Document history is disabled in application settings.",
+        )
+
     db_history = (
         db.query(DocumentHistory).filter(DocumentHistory.id == history_id).first()
     )
@@ -620,6 +792,16 @@ def get_specific_document_history(history_id: uuid.UUID, db: Session = Depends(g
 )
 def delete_document_history(history_id: uuid.UUID, db: Session = Depends(get_db)):
     """Delete a specific document history record by ID."""
+    # Check if history is enabled
+    enable_history = (
+        get_config_value(db, "enable_history", default="true").lower() == "true"
+    )
+    if not enable_history:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Document history is disabled in application settings.",
+        )
+
     db_history = (
         db.query(DocumentHistory).filter(DocumentHistory.id == history_id).first()
     )
